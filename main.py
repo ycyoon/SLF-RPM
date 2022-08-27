@@ -17,7 +17,7 @@ from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
 from models.slf_rpm import SLF_RPM
-from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFCDataset
+from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFCDataset, MergedDataset, CohfaceDataset, PUREDataset
 from utils.utils import accuracy, AverageMeter
 from utils.augmentation import Transformer, RandomROI, RandomStride
 
@@ -198,6 +198,58 @@ def main_worker(args):
         )
         train_dataset = UBFCDataset(
             args.dataset_dir, True, augmentation, args.vid_frame
+        )
+
+    elif args.dataset_name == "merged":
+        augmentation = RandomStride(
+            args.stride_list,
+            args.clip_frame,
+            Transformer(
+                augmentation,
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        )
+        
+        train_dataset = MergedDataset(
+            args.dataset_dir,
+            True,
+            augmentation,
+            args.vid_frame
+        )
+    elif args.dataset_name == "cohface":
+        augmentation = RandomStride(
+            args.stride_list,
+            args.clip_frame,
+            Transformer(
+                augmentation,
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        )
+        
+        train_dataset = CohfaceDataset(
+            args.dataset_dir,
+            True,
+            augmentation,
+            args.vid_frame
+        )
+    elif args.dataset_name == "pure":
+        augmentation = RandomStride(
+            args.stride_list,
+            args.clip_frame,
+            Transformer(
+                augmentation,
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        )
+        
+        train_dataset = PUREDataset(
+            args.dataset_dir,
+            True,
+            augmentation,
+            args.vid_frame
         )
 
     else:

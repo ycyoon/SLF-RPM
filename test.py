@@ -19,7 +19,7 @@ from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
 from models import classifier
-from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFCDataset
+from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFCDataset, MergedDataset, PUREDataset, CohfaceDataset
 from utils.utils import AverageMeter
 from utils.augmentation import Transformer, RandomROI
 
@@ -229,7 +229,7 @@ def main_worker(args):
     optimiser = optim.Adam(parameters, lr=args.lr, weight_decay=args.wd)
 
     # Load data
-    augmentation = [RandomROI([0])]
+    augmentation = [RandomROI([0])] #첫번째 이미지로만 학습
 
     if args.dataset_name == "mahnob-hci":
         augmentation = Transformer(
@@ -284,6 +284,60 @@ def main_worker(args):
             args.vid_frame_stride,
         )
         val_dataset = UBFCDataset(
+            args.dataset_dir,
+            False,
+            augmentation,
+            args.vid_frame,
+            args.vid_frame_stride,
+        )
+    elif args.dataset_name == "merged":
+        augmentation = Transformer(
+            augmentation, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225] #imagenet setting
+        )
+        train_dataset = MergedDataset(
+            args.dataset_dir,
+            True,
+            augmentation,
+            args.vid_frame,
+            args.vid_frame_stride,
+        )
+        val_dataset = MergedDataset(
+            args.dataset_dir,
+            False,
+            augmentation,
+            args.vid_frame,
+            args.vid_frame_stride,
+        )
+    elif args.dataset_name == "pure":
+        augmentation = Transformer(
+            augmentation, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225] #imagenet setting
+        )
+        train_dataset = PUREDataset(
+            args.dataset_dir,
+            True,
+            augmentation,
+            args.vid_frame,
+            args.vid_frame_stride,
+        )
+        val_dataset = PUREDataset(
+            args.dataset_dir,
+            False,
+            augmentation,
+            args.vid_frame,
+            args.vid_frame_stride,
+        )
+    elif args.dataset_name == "cohface":
+        augmentation = Transformer(
+            augmentation, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225] #imagenet setting
+        )
+        train_dataset = CohfaceDataset(
+            args.dataset_dir,
+            True,
+            augmentation,
+            args.vid_frame,
+            args.vid_frame_stride,
+        )
+        val_dataset = CohfaceDataset(
             args.dataset_dir,
             False,
             augmentation,
@@ -391,7 +445,6 @@ def main_worker(args):
             os.path.join(wandb.run.dir, "test_output.log"),
         )
 
-
 def train(train_loader, model, criterion, optimizer, device):
     losses = AverageMeter("Loss", ":.4e")
 
@@ -423,7 +476,6 @@ def train(train_loader, model, criterion, optimizer, device):
 
     return losses.avg
 
-
 @torch.no_grad()
 def validate(val_loader, model, criterion, device):
     maes = AverageMeter("MAE", ":.4e")
@@ -436,16 +488,18 @@ def validate(val_loader, model, criterion, device):
     model.eval()
 
     for videos, targets in tqdm(val_loader, desc="Val Iteration"):
+        
         # Process input
         videos = videos.to(device, non_blocking=True)
         targets = targets.reshape(-1, 1).to(device, non_blocking=True)
-
         # Compute output
         preds = model(videos)
-
+        
         # Loss
         mae = criterion(preds, targets)
         mse = mse_loss_func(preds, targets)
+
+        #print('debug504', targets[-20:], preds[-20:], mae)
 
         maes.update(mae.item(), targets.size(0))
         mses.update(mse.item(), targets.size(0))
@@ -466,7 +520,7 @@ def validate(val_loader, model, criterion, device):
 
     # RMSE
     rmse_loss = np.sqrt(mse_loss)
-
+    
     r, _ = pearsonr(all_true, all_pred)
 
     return maes.avg, std, rmse_loss, r
