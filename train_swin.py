@@ -132,10 +132,11 @@ def main_worker(args):
     torch.cuda.set_device(args.gpu)
     device = torch.device("cuda", args.gpu)
    
-    transformer_model = swin_transformer.SwinTransformer3D(patch_size=(2,4,4), drop_path_rate=0.2, depths=[2, 2, 18, 2],
+    head_model = i3d_head.I3DHead(1,1024)
+    model = swin_transformer.SwinTransformer3D(head_model, patch_size=(2,4,4), drop_path_rate=0.2, depths=[2, 2, 18, 2],
                            embed_dim=128,
                            num_heads=[4, 8, 16, 32])
-    head_model = i3d_head.I3DHead(1,1024)
+    
     
 
     # Load from pretrained model
@@ -160,7 +161,7 @@ def main_worker(args):
                 # Delete renamed or unused k
                 del state_dict[k]
 
-            msg = transformer_model.load_state_dict(state_dict, strict=False)
+            msg = model.load_state_dict(state_dict, strict=False)
             assert set(msg.missing_keys) == {
                 "encoder_q.fc.weight",
                 "encoder_q.fc.bias",
@@ -171,15 +172,16 @@ def main_worker(args):
             logging.info("=> Loaded pre-trained model '{}'".format(args.pretrained))
     
 
-    transformer_model = transformer_model.to(device)
-    head_model = head_model.to(device)
-    print(transformer_model, head_model)
+    model = model.to(device)
+    #head_model = head_model.to(device)
+    #print(model, head_model)
+    print(model)
 
     # Loss function
     criterion = nn.L1Loss().to(device)
 
     # Optimise only the linear classifier
-    parameters = list(filter(lambda p: p.requires_grad, transformer_model.parameters()))
+    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
     
     #optimiser = optim.Adam(parameters, lr=args.lr, weight_decay=args.wd)
     optimiser = optim.AdamW(parameters, lr=args.lr, betas=(0.9, 0.999), weight_decay=0.05)
@@ -329,11 +331,11 @@ def main_worker(args):
         logging.info("=> Loading checkpoint '{}'".format(args.pretrained))
         checkpoint = torch.load(args.pretrained, map_location="cpu")
         state_dict = checkpoint["state_dict"]
-        transformer_model.load_state_dict(state_dict, strict=True)
+        model.load_state_dict(state_dict, strict=True)
 
         print("=> Loaded pre-trained model '{}'".format(args.pretrained))
         logging.info("=> Loaded pre-trained model '{}'".format(args.pretrained))
-        mae, std, rmse, r = validate(val_loader, transformer_model, criterion, device)
+        mae, std, rmse, r = validate(val_loader, model, criterion, device)
         print(
             "Evaluation Result\n MAE: {:.4f}; SD: {:.4f}; RMSE: {:.4f}; R: {:.4f};".format(
                 mae, std, rmse, r
@@ -348,10 +350,10 @@ def main_worker(args):
 
     # Train model
     for epoch in trange(args.epochs, desc="Epoch"):
-        train_loss = train(train_loader, transformer_model, head_model, criterion, optimiser, device)
+        train_loss = train(train_loader, model, criterion, optimiser, device)
 
         # Evaluate on validation set
-        val_loss, std, rmse, r = validate(val_loader, transformer_model, head_model, criterion, device)
+        val_loss, std, rmse, r = validate(val_loader, model, criterion, device)
         if args.wandb:
             wandb.log(
                 {
@@ -369,7 +371,7 @@ def main_worker(args):
         if is_best:
             state = {
                 "epoch": epoch + 1,
-                "state_dict": transformer_model.state_dict(),
+                "state_dict": model.state_dict(),
                 "optimiser": optimiser.state_dict(),
                 "best_loss": best_loss,
             }
@@ -401,10 +403,10 @@ def main_worker(args):
             os.path.join(wandb.run.dir, "test_output.log"),
         )
 
-def train(train_loader, transformer_model, head_model, criterion, optimizer, device):
+def train(train_loader, model, criterion, optimizer, device):
     losses = AverageMeter("Loss", ":.4e")
-    transformer_model.train()
-    head_model.train()
+    model.train()
+    #head_model.train()
 
     for videos, targets in tqdm(train_loader, desc="Train Iteration"):
         # Process input
@@ -412,8 +414,9 @@ def train(train_loader, transformer_model, head_model, criterion, optimizer, dev
         targets = targets.reshape(-1, 1).to(device, non_blocking=True)
 
         # Compute output
-        emb = transformer_model(videos)
-        preds = head_model(emb)
+        #emb = transformer_model(videos)
+        #preds = head_model(emb)
+        preds = model(videos)
         # Loss
         loss = criterion(preds, targets)
         losses.update(loss.item(), videos.size(0))
@@ -426,7 +429,7 @@ def train(train_loader, transformer_model, head_model, criterion, optimizer, dev
     return losses.avg
 
 @torch.no_grad()
-def validate(val_loader, model, headmodel, criterion, device):
+def validate(val_loader, model, criterion, device):
     maes = AverageMeter("MAE", ":.4e")
     mses = AverageMeter("MSE", ":.4e")
     all_pred = []
@@ -435,15 +438,16 @@ def validate(val_loader, model, headmodel, criterion, device):
 
     # Switch to eval mode
     model.eval()
-    headmodel.eval()
+    #headmodel.eval()
     for videos, targets in tqdm(val_loader, desc="Val Iteration"):
         
         # Process input
         videos = videos.to(device, non_blocking=True)
         targets = targets.reshape(-1, 1).to(device, non_blocking=True)
         # Compute output
-        embs = model(videos)
-        preds = headmodel(embs)
+        #embs = model(videos)
+        #preds = headmodel(embs)
+        preds = model(videos)
         # Loss
         mae = criterion(preds, targets)
         mse = mse_loss_func(preds, targets)

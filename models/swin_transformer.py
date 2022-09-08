@@ -12,7 +12,6 @@ from functools import reduce, lru_cache
 from operator import mul
 from einops import rearrange
 
-
 class Mlp(nn.Module):
     """ Multilayer perceptron."""
 
@@ -478,6 +477,7 @@ class SwinTransformer3D(nn.Module):
     """
 
     def __init__(self,
+                 head, 
                  pretrained=None,
                  pretrained2d=True,
                  patch_size=(4,4,4),
@@ -495,7 +495,7 @@ class SwinTransformer3D(nn.Module):
                  norm_layer=nn.LayerNorm,
                  patch_norm=False,
                  frozen_stages=-1,
-                 use_checkpoint=False):
+                 use_checkpoint=False,):
         super().__init__()
 
         self.pretrained = pretrained
@@ -506,6 +506,7 @@ class SwinTransformer3D(nn.Module):
         self.frozen_stages = frozen_stages
         self.window_size = window_size
         self.patch_size = patch_size
+        self.head = head
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed3D(
@@ -657,6 +658,9 @@ class SwinTransformer3D(nn.Module):
         x = rearrange(x, 'n c d h w -> n d h w c')
         x = self.norm(x)
         x = rearrange(x, 'n d h w c -> n c d h w')
+        
+        #ycyoon
+        x = self.head(x)
         return x
 
     def train(self, mode=True):
