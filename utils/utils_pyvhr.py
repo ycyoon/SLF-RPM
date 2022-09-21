@@ -823,11 +823,69 @@ class AverageMeter(object):
         fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"
         return fmtstr.format(**self.__dict__)
 
+# def flow_to_img(raw_flow, bound=200.):
+#     """Convert flow to gray image.
+#     Args:
+#         raw_flow (np.ndarray[float]): Estimated flow with the shape (w, h).
+#         bound (float): Bound for the flow-to-image normalization. Default: 20.
+#     Returns:
+#         np.ndarray[uint8]: The result list of np.ndarray[uint8], with shape
+#                         (w, h).
+#     """
+#     flow = np.clip(raw_flow, -bound, bound)
+#     flow += bound
+#     flow *= (255 / float(2 * bound))
+#     flow = flow.astype(np.uint8)
+#     return flow
+
+def extract_optical_flow(frame_path, dest_path, size):
+    """Extract optical flow from video frames"""
+    # loads the video frames from np.savez_compressed
+    frames = np.load(frame_path)['frames']
+    # creates the optical flow object
+    optical_flow = cv2.optflow.createOptFlow_DeepFlow()
+    #optical_flow = cv2.optflow.DualTVL1OpticalFlow_create()
+    # creates the optical flow array
+    optical_flow_array = np.zeros((frames.shape[0] - 1, size, size, 2))
+    # iterates over the frames
+    for i in range(frames.shape[0] - 1):
+        # computes the optical flow
+        # I0temp.channels() == 1 in function 'calc'
+        # convert frames to grayscale
+        I0temp = cv2.cvtColor(frames[i][0], cv2.COLOR_BGR2GRAY)
+        I1temp = cv2.cvtColor(frames[i+1][0], cv2.COLOR_BGR2GRAY)
+        flow = optical_flow.calc(I0temp, I1temp, None)
+
+        # resizes the optical flow
+        flow = cv2.resize(flow, (size, size))
+        # stores the optical flow
+        optical_flow_array[i] = flow
+        
+        # define flow_to_image function
+        def flow_to_img(flow):
+            """Converts the optical flow into an image"""
+            hsv = np.zeros((flow.shape[0], flow.shape[1], 3), dtype=np.uint8)
+            hsv[..., 1] = 255
+            mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+            hsv[..., 0] = ang * 180 / np.pi / 2
+            hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+            bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+            return bgr
+        # convert optical flow to image
+        flow_img = flow_to_img(flow)
+        # save optical flow image
+        # cv2.imwrite(os.path.join(dest_path, 'flow_{:04d}.jpg'.format(i)), flow_img)
+        # cv2.imwrite(os.path.join(dest_path, 'org_{:04d}.jpg'.format(i)), I0temp)
+
+    # saves the optical flow array
+    np.savez_compressed(os.path.join(dest_path, 'optical_flow.npz'), optical_flow=optical_flow_array)
+
 #ycyoon 추가
 if __name__=='__main__':
+    extract_optical_flow('/home/yoon/data/PPG/preprocess/pure/10-01/0.npz', 'opflow', 64)
     #extract_ubfc_dataset('/home/yoon/data/PPG/UBFC/UBFC_DATASET/DATASET_2/', 'data')
     #extract_mahnob_hci_dataset('/home/yoon/data/PPG/mahnob/Sessions', 'data2')
     #extract_pure_dataset('/home/yoon/data/PPG/PURE', 'pure')
     #extract_cohface_dataset('/home/yoon/data/PPG/cohface/', 'cohface')
-    extract_mahnob_dataset('/home/yoon/data/PPG/mahnob/Sessions', 'mahnob')
+    #extract_mahnob_dataset('/home/yoon/data/PPG/mahnob/Sessions', 'mahnob')
     #mahnob_delete_bw('/home/yoon/data/PPG/mahnob/Sessions')

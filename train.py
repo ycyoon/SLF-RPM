@@ -221,6 +221,7 @@ def main_worker(args):
 
     # Loss function
     criterion = nn.L1Loss().to(device)
+    #criterion = nn.MSELoss().to(device)
 
     # Optimise only the linear classifier
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
@@ -448,7 +449,8 @@ def main_worker(args):
 def train(train_loader, model, criterion, optimizer, device):
     losses = AverageMeter("Loss", ":.4e")
     model.train()
-    for videos, targets in tqdm(train_loader, desc="Train Iteration"):
+    pbar = tqdm(train_loader, desc="Train Iteration")
+    for videos, targets in pbar:
         # Process input
         videos = videos.to(device, non_blocking=True)
         targets = targets.reshape(-1, 1).to(device, non_blocking=True)
@@ -464,6 +466,7 @@ def train(train_loader, model, criterion, optimizer, device):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        pbar.set_description("loss %f" % losses.avg)
 
     return losses.avg
 

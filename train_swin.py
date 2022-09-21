@@ -60,13 +60,8 @@ parser.add_argument("--vid_frame_stride", default=2, type=int)
 
 # Log setting
 parser.add_argument("--log_dir", default="./path/to/your/log", type=str)
-parser.add_argument("--wandb", action="store_true")
 parser.add_argument("--run_tag", nargs="+", default=None)
 parser.add_argument("--run_name", default=None, type=str)
-
-# Model setting
-parser.add_argument("--model_depth", default=18, type=int)
-parser.add_argument("--finetune", default="fc", type=str)
 
 
 def main():
@@ -100,20 +95,6 @@ def main():
         logging.info("You have not specify a GPU, use the default value 0")
         args.gpu = 0
 
-    # Log config
-    if args.wandb:
-        import wandb
-
-        wandb.init(
-            project="temp",
-            notes="Test model",
-            tags=args.run_tag,
-            name=args.run_name,
-            job_type="test",
-            dir=args.log_dir,
-            config=args,
-        )
-        args = wandb.config
 
     # Simply call main_worker function
     try:
@@ -145,46 +126,31 @@ def main_worker(args):
             print("=> Loading checkpoint '{}'".format(args.pretrained))
             checkpoint = torch.load(args.pretrained, map_location="cpu")
             state_dict = checkpoint["state_dict"]
-            for k in list(state_dict.keys()):
-                # Retain only encoder and contexter weights
-                if k.startswith("module.encoder_q") and not k.startswith(
-                    "module.encoder_q.fc"
-                ):
-                    state_dict[k[len("module.") :]] = state_dict[k]
-
-                elif k.startswith("encoder_q") and not k.startswith("encoder_q.fc"):
-                    continue
-
-                elif not k.startswith("fc"):
-                    state_dict["encoder_q.{}".format(k)] = state_dict[k]
-
-                # Delete renamed or unused k
-                del state_dict[k]
-
+            
             msg = model.load_state_dict(state_dict, strict=False)
-            assert set(msg.missing_keys) == {
-                "encoder_q.fc.weight",
-                "encoder_q.fc.bias",
-            }, "Missing keys: {};\n Have: {}".format(
-                set(msg.missing_keys), list(state_dict.keys())
-            )
+            
             print("=> Loaded pre-trained model '{}'".format(args.pretrained))
             logging.info("=> Loaded pre-trained model '{}'".format(args.pretrained))
     
 
-    model = model.to(device)
-    #head_model = head_model.to(device)
-    #print(model, head_model)
+    
+    model = nn.DataParallel(model)
+    model = model.to('cuda')
     print(model)
 
     # Loss function
-    criterion = nn.L1Loss().to(device)
+    #criterion = nn.L1Loss().to(device)
+    #criterion = nn.L1Loss().to(device)
+    criterion = nn.SmoothL1Loss().to(device)
+    #criterion = nn.MSELoss().to(device)
 
     # Optimise only the linear classifier
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
     
     #optimiser = optim.Adam(parameters, lr=args.lr, weight_decay=args.wd)
     optimiser = optim.AdamW(parameters, lr=args.lr, betas=(0.9, 0.999), weight_decay=0.05)
+
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=args.epochs, eta_min=0)
 
     # Load data
     augmentation = [RandomROI([0])] #첫번째 이미지로만 학습
@@ -351,19 +317,9 @@ def main_worker(args):
     # Train model
     for epoch in trange(args.epochs, desc="Epoch"):
         train_loss = train(train_loader, model, criterion, optimiser, device)
-
+        scheduler.step()
         # Evaluate on validation set
-        val_loss, std, rmse, r = validate(val_loader, model, criterion, device)
-        if args.wandb:
-            wandb.log(
-                {
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "std": std,
-                    "rmse": rmse,
-                    "r": r,
-                }
-            )
+        val_loss, std, rmse, r = validate(val_loader, model, criterion, device)        
 
         is_best = val_loss < best_loss
         best_loss = min(val_loss, best_loss)
@@ -371,7 +327,7 @@ def main_worker(args):
         if is_best:
             state = {
                 "epoch": epoch + 1,
-                "state_dict": model.state_dict(),
+                "state_dict": model.module.state_dict(),
                 "optimiser": optimiser.state_dict(),
                 "best_loss": best_loss,
             }
@@ -381,9 +337,6 @@ def main_worker(args):
             print("\nModel saved at epoch {}".format(epoch + 1))
             logging.info("Model saved at epoch {}".format(epoch + 1))
 
-        # Logs
-        if args.wandb:
-            wandb.run.summary["val_loss"] = best_loss
 
         print(
             """Test Train Loss: {:.4f}, Test Val Loss/Best: {:.4f}/{:.4f}, 
@@ -397,18 +350,13 @@ def main_worker(args):
             )
         )
 
-    if args.wandb:
-        shutil.copyfile(
-            os.path.join(args.log_dir, "test_output.log"),
-            os.path.join(wandb.run.dir, "test_output.log"),
-        )
-
 def train(train_loader, model, criterion, optimizer, device):
     losses = AverageMeter("Loss", ":.4e")
     model.train()
     #head_model.train()
 
-    for videos, targets in tqdm(train_loader, desc="Train Iteration"):
+    pbar = tqdm(train_loader, desc="Train Iteration")
+    for videos, targets in pbar:
         # Process input
         videos = videos.to(device, non_blocking=True)
         targets = targets.reshape(-1, 1).to(device, non_blocking=True)
@@ -425,7 +373,7 @@ def train(train_loader, model, criterion, optimizer, device):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
+        pbar.set_description("loss %f" % losses.avg)
     return losses.avg
 
 @torch.no_grad()

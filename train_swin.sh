@@ -1,10 +1,8 @@
-python train_swin.py --gpu 0 --epochs 200 --batch_size 32 --lr 1e-3 --dropout 0.1 \
+python train_swin.py --gpu 0 --epochs 200 --batch_size 64 --lr 1e-5 \
 	--dataset_name "merged" \
 	--dataset_dir "data" \
 	--workers 4 --vid_frame 150 --vid_frame_stride 2 \
 	--log_dir "./logs/merged/test" \
-	--model_depth 50 \
-
 
 
 #python test.py --gpu 0 --epochs 100 --batch_size 128 --lr 5e-3 --dropout 0 \
