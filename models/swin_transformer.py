@@ -660,7 +660,10 @@ class SwinTransformer3D(nn.Module):
         x = rearrange(x, 'n d h w c -> n c d h w')
         
         #ycyoon
-        x = self.head(x)
+        if type(self.head) == "list":
+            return [head(x) for head in self.head]
+        else:
+            x = self.head(x)
         return x
 
     def train(self, mode=True):

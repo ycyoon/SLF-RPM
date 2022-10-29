@@ -19,9 +19,13 @@ class Transformer:
         if mean is None or std is None:
             self.transform = transforms.Compose([*transform, ToTensor()])
 
-        else:
+        elif transform is not None:
             self.transform = transforms.Compose(
                 [*transform, ToTensor(), Normalise(mean=mean, std=std)]
+            )
+        else:
+            self.transform = transforms.Compose(
+                [ToTensor(), Normalise(mean=mean, std=std)]
             )
 
     def __call__(self, vid_seq):
@@ -72,9 +76,15 @@ class RandomStride:
         for fn_id in fn_idx:
             idx = torch.randint(0, len(self.stride_list), (1,)).item()
             stride = self.stride_list[idx]
-            assert (vid_seq.shape[0] // stride) >= self.n_frame
-
+            #assert (vid_seq.shape[0] // stride) >= self.n_frame, "%d %d %d" % (vid_seq.shape[0], stride, self.n_frame)
             vid_aug[fn_id] = self.base_transform(vid_seq[::stride][: self.n_frame])
+            #zero padding
+            if vid_aug[fn_id].shape[0] < self.n_frame:
+                #extend last frame
+                vid_aug[fn_id] = torch.cat([vid_aug[fn_id], vid_aug[fn_id][-1].unsqueeze(0).repeat(self.n_frame - vid_aug[fn_id].shape[0], 1, 1, 1)], dim=0)
+
+                #vid_aug[fn_id] = torch.cat([vid_aug[fn_id], torch.zeros(self.n_frame - vid_aug[fn_id].shape[0], c, h, w)], dim=0)
+            
             roi_idx = [
                 t.roi_idx
                 for t in self.base_transform.transform.transforms
@@ -102,4 +112,9 @@ class Normalise:
 
 class ToTensor:
     def __call__(self, vid_seq):
+        try:
+            a = [F.to_tensor(img) for img in vid_seq]
+            torch.stack(a)
+        except Exception as e:
+            raise
         return torch.stack([F.to_tensor(img) for img in vid_seq])

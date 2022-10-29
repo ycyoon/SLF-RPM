@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .resnet3d import generate_model
-
+from .vivit import ViViT
+from models import swin_transformer, i3d_head
 LARGE_NUM = 1e9
 
 
@@ -31,15 +32,26 @@ class SLF_RPM(nn.Module):
         self.temperature = temperature
 
         # Backbone
-        self.encoder_q = generate_model(model_depth=model_depth, n_classes=n_class)
-
+        # self.encoder_q = generate_model(model_depth=model_depth, n_classes=n_class)
         # Projection head
-        dim_mlp = self.encoder_q.fc.weight.shape[1]
+        # dim_mlp = self.encoder_q.fc.weight.shape[1]
+        # self.encoder_q.fc = nn.Identity()
+
+        # self.encoder_q  = ViViT(112, 16, n_class, 75, pool='mean', heads=2, dim_head=64, depth=2) #ycyoon
+        # dim_mlp = self.encoder_q.mlp_head[1].weight.shape[1]        
+
+        head_model = i3d_head.I3DHead(1,1024)
+        self.encoder_q = swin_transformer.SwinTransformer3D(head_model, patch_size=(2,4,4), drop_path_rate=0.2, depths=[2, 2, 18, 2],
+                            embed_dim=128,
+                            num_heads=[4, 8, 16, 32])
+        dim_mlp = self.encoder_q.head.fc_cls.weight.shape[1]        
+
+        self.encoder_q.head_model = nn.Identity()
+
         self.proj_head = nn.Sequential(
             nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), nn.Linear(dim_mlp, n_class)
         )
-        self.encoder_q.fc = nn.Identity()
-
+        
         # Augmentation classifier
         self.spatial_classifer = nn.Linear(dim_mlp, n_spatial)
         self.temporal_classifer = nn.Linear(dim_mlp, n_temporal)
@@ -59,10 +71,10 @@ class SLF_RPM(nn.Module):
 
                 A list of predicted temporal augmentations.
         """
-        x = torch.cat(vids, axis=0).transpose(
-            1, 2
-        )  # (2*n_video, n_channel, n_frame, height, width)
-
+        # x = torch.cat(vids, axis=0).transpose(
+        #     1, 2
+        # )  # (2*n_video, n_channel, n_frame, height, width)
+        x = torch.cat(vids, axis=0) #ycyoon
         # Compute video features
         q = self.encoder_q(x)  # (2*n_video, features)
 
@@ -82,7 +94,6 @@ class SLF_RPM(nn.Module):
         masks = F.one_hot(
             torch.arange(0, batch_size, device=feature_a.device), num_classes=batch_size
         )  # (n_video, features)
-
         logits_aa = torch.matmul(feature_a, feature_a.T)  # (n_video, n_video)
         logits_aa = logits_aa - masks * LARGE_NUM
         logits_bb = torch.matmul(feature_b, feature_b.T)  # (n_video, n_video)
@@ -98,5 +109,4 @@ class SLF_RPM(nn.Module):
 
         labels = torch.arange(0, batch_size, device=feature_a.device)  # (n_video,)
         labels = torch.cat([labels, labels], axis=0)  # (2*n_video,)
-
         return logits, labels, pred_spatial, pred_temporal
