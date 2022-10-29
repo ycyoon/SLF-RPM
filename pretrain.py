@@ -1,4 +1,5 @@
 # Based on https://github.com/pytorch/examples/tree/master/imagenet
+from cProfile import label
 import os
 import sys
 import shutil
@@ -17,7 +18,7 @@ from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
 from models.slf_rpm import SLF_RPM
-from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFCDataset, MergedDataset, CohfaceDataset, PUREDataset
+from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFC1Dataset, UBFC2Dataset, MergedDataset, CohfaceDataset, PUREDataset
 from utils.utils import accuracy, AverageMeter
 from utils.augmentation import Transformer, RandomROI, RandomStride
 
@@ -40,8 +41,8 @@ parser.add_argument(
 )
 
 # Data setting
-parser.add_argument("--dataset_name", default="mahnob-hci", type=str)
-parser.add_argument("--dataset_dir", default=None, type=str)
+parser.add_argument("--dataset_name", default="mahnob", type=str)
+parser.add_argument("--dataset_dir", default='/home/yoon/data/PPG/preprocess/mahnob', type=str)
 parser.add_argument(
     "--workers",
     default=4,
@@ -118,6 +119,12 @@ def main():
     try:
         main_worker(args)
     except Exception as e:
+        #print exception location
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        logging.error(exc_type, fname, exc_tb.tb_lineno)
+        print(exc_type, fname, exc_tb.tb_lineno)
+
         logging.critical(e, exc_info=True)
         print(e)
 
@@ -129,16 +136,16 @@ def main_worker(args):
     device = torch.device("cuda", args.gpu)
 
     # Create SLF-RPM model
-    print(
-        "\n=> Creating SLF-RPM Pretrain Model: 3D ResNet-{} with MLP".format(
-            args.model_depth
-        )
-    )
-    logging.info(
-        "=> Creating SLF-RPM Pretrain Model: 3D ResNet-{} with MLP".format(
-            args.model_depth
-        )
-    )
+    # print(
+    #     "\n=> Creating SLF-RPM Pretrain Model: 3D ResNet-{} with MLP".format(
+    #         args.model_depth
+    #     )
+    # )
+    # logging.info(
+    #     "=> Creating SLF-RPM Pretrain Model: 3D ResNet-{} with MLP".format(
+    #         args.model_depth
+    #     )
+    # )
     model = SLF_RPM(
         args.model_depth,
         args.n_dim,
@@ -147,7 +154,7 @@ def main_worker(args):
         len(args.stride_list),
     )
     model = model.to(device)
-    print(model)
+    #print(model)
 
     # Loss function
     criterion = nn.CrossEntropyLoss().to(device)
@@ -157,8 +164,8 @@ def main_worker(args):
 
     # Load data
     augmentation = [RandomROI(args.roi_list)]
-
-    if args.dataset_name == "mahnob-hci":
+    
+    if args.dataset_name == "mahnob":
         augmentation = RandomStride(
             args.stride_list,
             args.clip_frame,
@@ -186,7 +193,7 @@ def main_worker(args):
             args.dataset_dir, True, augmentation, args.vid_frame
         )
 
-    elif args.dataset_name == "ubfc-rppg":
+    elif args.dataset_name == "ubfc2":
         augmentation = RandomStride(
             args.stride_list,
             args.clip_frame,
@@ -196,7 +203,20 @@ def main_worker(args):
                 std=[0.2947, 0.2393, 0.2395],
             ),
         )
-        train_dataset = UBFCDataset(
+        train_dataset = UBFC2Dataset(
+            args.dataset_dir, True, augmentation, args.vid_frame
+        )
+    elif args.dataset_name == "ubfc1":
+        augmentation = RandomStride(
+            args.stride_list,
+            args.clip_frame,
+            Transformer(
+                augmentation,
+                mean=[0.4642, 0.3766, 0.3744],
+                std=[0.2947, 0.2393, 0.2395],
+            ),
+        )
+        train_dataset = UBFC1Dataset(
             args.dataset_dir, True, augmentation, args.vid_frame
         )
 
@@ -351,10 +371,9 @@ def train(train_loader, model, criterion, optimizer, device):
         # Process input
         videos[0] = videos[0].to(device, non_blocking=True)
         videos[1] = videos[1].to(device, non_blocking=True)
-
+        
         label_spatial = torch.cat(label_spatial, axis=0).to(device, non_blocking=True)
         label_temporal = torch.cat(label_temporal, axis=0).to(device, non_blocking=True)
-
         # Compute output
         logits, labels, pred_spatial, pred_temporal = model(videos)
 

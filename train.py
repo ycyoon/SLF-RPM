@@ -19,7 +19,7 @@ from torch.backends import cudnn
 from torch.utils.data import DataLoader
 
 from models import classifier
-from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFCDataset, MergedDataset, PUREDataset, CohfaceDataset
+from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFC2Dataset, MergedDataset, PUREDataset, CohfaceDataset
 from utils.utils import AverageMeter
 from utils.augmentation import Transformer, RandomROI
 
@@ -230,7 +230,7 @@ def main_worker(args):
     optimiser = optim.Adam(parameters, lr=args.lr, weight_decay=args.wd)
 
     # Load data
-    augmentation = [RandomROI([0])] #첫번째 이미지로만 학습
+    augmentation = [RandomROI([0])]
 
     if args.dataset_name == "mahnob-hci":
         augmentation = Transformer(
@@ -273,18 +273,18 @@ def main_worker(args):
             args.vid_frame_stride,
         )
 
-    elif args.dataset_name == "ubfc-rppg":
+    elif args.dataset_name == "ubfc2":
         augmentation = Transformer(
             augmentation, mean=[0.4642, 0.3766, 0.3744], std=[0.2947, 0.2393, 0.2395]
         )
-        train_dataset = UBFCDataset(
+        train_dataset = UBFC2Dataset(
             args.dataset_dir,
             True,
             augmentation,
             args.vid_frame,
             args.vid_frame_stride,
         )
-        val_dataset = UBFCDataset(
+        val_dataset = UBFC2Dataset(
             args.dataset_dir,
             False,
             augmentation,
@@ -493,7 +493,9 @@ def validate(val_loader, model, criterion, device):
         mae = criterion(preds, targets)
         mse = mse_loss_func(preds, targets)
 
-        #print('debug504', targets[-20:], preds[-20:], mae)
+        te = targets[-20:].tolist(); pe = preds[-20:].tolist()
+        ta = [round(t[0], 2) for t in te]; pa = [round(p[0], 2) for p in pe]
+        print('example', [list(a) for a in zip(ta, pa)], round(np.std(ta),2), round(np.std(pa),2))
 
         maes.update(mae.item(), targets.size(0))
         mses.update(mse.item(), targets.size(0))
