@@ -132,8 +132,8 @@ def main():
 def main_worker(args):
     print("Use GPU: {} for training".format(args.gpu))
     logging.info("Use GPU: {} for training".format(args.gpu))
-    torch.cuda.set_device(args.gpu)
-    device = torch.device("cuda", args.gpu)
+    #torch.cuda.set_device(args.gpu)
+    #device = torch.device("cuda", args.gpu)
 
     # Create SLF-RPM model
     # print(
@@ -153,7 +153,9 @@ def main_worker(args):
         len(args.roi_list),
         len(args.stride_list),
     )
+    device = 'cuda'
     model = model.to(device)
+    model = torch.nn.DataParallel(model)
     #print(model)
 
     # Loss function
@@ -308,7 +310,7 @@ def main_worker(args):
         if is_best:
             state = {
                 "epoch": epoch + 1,
-                "state_dict": model.state_dict(),
+                "state_dict": model.module.state_dict(),
                 "optimiser": optimiser.state_dict(),
             }
             path = os.path.join(args.log_dir, "best_train_model.pth.tar")

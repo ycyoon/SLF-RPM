@@ -658,7 +658,6 @@ class SwinTransformer3D(nn.Module):
         x = rearrange(x, 'n c d h w -> n d h w c')
         x = self.norm(x)
         x = rearrange(x, 'n d h w c -> n c d h w')
-        
         #ycyoon
         if type(self.head) == "list":
             return [head(x) for head in self.head]

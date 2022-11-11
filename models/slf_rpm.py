@@ -37,20 +37,23 @@ class SLF_RPM(nn.Module):
         # dim_mlp = self.encoder_q.fc.weight.shape[1]
         # self.encoder_q.fc = nn.Identity()
 
-        # self.encoder_q  = ViViT(112, 16, n_class, 75, pool='mean', heads=2, dim_head=64, depth=2) #ycyoon
-        # dim_mlp = self.encoder_q.mlp_head[1].weight.shape[1]        
+        self.encoder_q  = ViViT(112, 16, n_class, 75, pool='mean', heads=2, dim_head=64, depth=2) #ycyoon
+        dim_mlp = self.encoder_q.mlp_head[1].weight.shape[1]        
+        self.encoder_q.mlp_head = nn.Identity()
 
-        head_model = i3d_head.I3DHead(1,1024)
-        self.encoder_q = swin_transformer.SwinTransformer3D(head_model, patch_size=(2,4,4), drop_path_rate=0.2, depths=[2, 2, 18, 2],
-                            embed_dim=128,
-                            num_heads=[4, 8, 16, 32])
-        dim_mlp = self.encoder_q.head.fc_cls.weight.shape[1]        
-
-        self.encoder_q.head_model = nn.Identity()
+        # head_model = i3d_head.I3DHead(n_class, 768)
+        # self.encoder_q = swin_transformer.SwinTransformer3D(head_model, patch_size=(4,4,4), drop_path_rate=0.2, depths=[2, 2, 6, 2],
+        #                     embed_dim=96,
+        #                     num_heads=[3, 6, 12, 24])                        
+        # dim_mlp = self.encoder_q.head.fc_cls.weight.shape[1]                
+        # self.encoder_q.head.fc_cls = nn.Identity()
 
         self.proj_head = nn.Sequential(
             nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), nn.Linear(dim_mlp, n_class)
         )
+
+        #print number of parameters of encoder_q
+        print('encoder_q parameters: ', sum(p.numel() for p in self.encoder_q.parameters() if p.requires_grad))
         
         # Augmentation classifier
         self.spatial_classifer = nn.Linear(dim_mlp, n_spatial)
@@ -93,7 +96,7 @@ class SLF_RPM(nn.Module):
         batch_size = feature_a.shape[0]
         masks = F.one_hot(
             torch.arange(0, batch_size, device=feature_a.device), num_classes=batch_size
-        )  # (n_video, features)
+        )  # (n_video, features)        
         logits_aa = torch.matmul(feature_a, feature_a.T)  # (n_video, n_video)
         logits_aa = logits_aa - masks * LARGE_NUM
         logits_bb = torch.matmul(feature_b, feature_b.T)  # (n_video, n_video)

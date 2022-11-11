@@ -20,9 +20,9 @@ from torch.utils.data import DataLoader
 
 #from models import i3d_head, swin_transformer
 from models import swin_transformer, i3d_head, vivit, TS_CAN
-from utils.dataset import MAHNOBHCIDataset, VIPLHRDataset, UBFC1Dataset, UBFC2Dataset, MergedDataset, PUREDataset, CohfaceDataset
+from utils.dataset import rPPGDataset
 from utils.utils import AverageMeter
-from utils.augmentation import RandomROI, Transformer, Resize, StdAndNormalise
+from utils.augmentation import  Transformer, Resize, StdAndNormalise
 from torchvision import transforms
 
 parser = argparse.ArgumentParser()
@@ -49,7 +49,9 @@ parser.add_argument(
 )
 
 # Data setting
-parser.add_argument("--dataset_name", default="mahnob-hci", type=str)
+parser.add_argument("--trainval_dataset_name", default="ubfc2", type=str)
+parser.add_argument("--test_dataset_name", default="none", type=str)
+
 parser.add_argument("--dataset_dir", default=None, type=str)
 parser.add_argument(
     "--workers",
@@ -65,12 +67,12 @@ parser.add_argument("--vid_frame_stride", default=2, type=int)
 parser.add_argument("--log_dir", default="./path/to/your/log", type=str)
 parser.add_argument("--run_tag", nargs="+", default=None)
 parser.add_argument("--run_name", default=None, type=str)
-parser.add_argument("--finetune", default="head", type=str)
+parser.add_argument("--finetune", default="all", type=str)
 parser.add_argument("--model_name", default="vivit", type=str)
-
-MODEL_IMGSIZE = 112
+args = parser.parse_args()
+GPU_NUM = 8
+MODEL_IMGSIZE = 72
 def main():
-    args = parser.parse_args()
 
     if not os.path.exists(args.log_dir):
         os.makedirs(args.log_dir)
@@ -118,11 +120,11 @@ def main_worker(args):
     best_loss = sys.maxsize 
     device = torch.device("cuda")
     if args.model_name == "swin":
-        head_model = i3d_head.I3DHead(1,768)
+        head_model = i3d_head.I3DHead(args.vid_frame//args.vid_frame_stride,768)
         model = swin_transformer.SwinTransformer3D(head_model, patch_size=(4,4,4), drop_path_rate=0.2, depths=[2, 2, 6, 2],
                             embed_dim=96,
-                            num_heads=[3, 6, 12, 24])
-        criterion = nn.L1Loss().to(device)
+                            num_heads=[3, 6, 12, 24], in_chans=6)
+        criterion = nn.MSELoss().to(device)
         # Load from pretrained model
         if args.pretrained:
             if os.path.isfile(args.pretrained):
@@ -151,7 +153,7 @@ def main_worker(args):
         model.head = head_model    
     elif args.model_name == "vivit":
         #model = vivit.ViViT(112, 8, 1, 75, pool='mean', scale_dim=8, heads=6, depth=8, dropout=0.3, emb_dropout=0.3).cuda()
-        model = vivit.ViViT(MODEL_IMGSIZE, 16, 180, 180, heads=2, dim_head=64, depth=2).cuda()
+        model = vivit.ViViT(MODEL_IMGSIZE, 8, args.vid_frame//args.vid_frame_stride, args.vid_frame//args.vid_frame_stride, heads=2, dim_head=64, depth=2).cuda()
         criterion = nn.L1Loss().to(device)
         # Load from pretrained model
         #print(model)
@@ -193,7 +195,7 @@ def main_worker(args):
             logging.info("=> Finetune only head layer")   
         
     elif args.model_name == "tscan":
-        model = TS_CAN.TSCAN(frame_depth=args.vid_frame//args.vid_frame_stride, img_size=112).to(device)
+        model = TS_CAN.TSCAN(frame_depth=args.vid_frame//args.vid_frame_stride, img_size=MODEL_IMGSIZE).to(device)
         criterion = torch.nn.MSELoss().to(device)
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -202,163 +204,31 @@ def main_worker(args):
 
     model = nn.DataParallel(model)
     model = model.to('cuda')
-    #print(model)
-
-    # Loss function
-    #criterion = RMSLELoss().to(device)
-    
-    #criterion = nn.SmoothL1Loss().to(device)
-    #criterion = nn.MSELoss().to(device)
 
     # Optimise only the linear classifier
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
-    
-    #optimiser = optim.SGD(parameters, lr=args.lr, weight_decay=0)
-    #optimiser = optim.Adam(parameters, lr=args.lr, weight_decay=0.5)
     optimiser = optim.AdamW(parameters, lr=args.lr, weight_decay=0)
 
     # scheduler = optim.lr_scheduler.ExponentialLR(optimiser, gamma=0.95)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer=optimiser,
                                         lr_lambda=lambda epoch: 0.99 ** epoch)
     # Load data
-    #augmentation = [RandomROI([0])]
-    augmentation = [RandomROI([0]), Resize(MODEL_IMGSIZE), StdAndNormalise()]
+    augmentation = [Resize(MODEL_IMGSIZE), StdAndNormalise()]
 
-    #augmentation = Transformer(
-    #        augmentation, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225] #imagenet setting
-    #    )
     augmentation = transforms.Compose(
                 [*augmentation]
             )
-
-    if args.dataset_name == "mahnob":
-        train_dataset = MAHNOBHCIDataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = MAHNOBHCIDataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        assert not [
-            i for i in val_dataset.files if i in train_dataset.files
-        ], "Train/Val datasets are intersected!"
-
-    elif args.dataset_name == "vipl-hr-v2":
-
-        train_dataset = VIPLHRDataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = VIPLHRDataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-
-    elif args.dataset_name == "ubfc2":
-
-        train_dataset = UBFC2Dataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = UBFC2Dataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-    elif args.dataset_name == "ubfc1":
-
-        train_dataset = UBFC1Dataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = UBFC1Dataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-    elif args.dataset_name == "merged":
-        
-        train_dataset = MergedDataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = MergedDataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-    elif args.dataset_name == "pure":
-        
-        train_dataset = PUREDataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = PUREDataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-    elif args.dataset_name == "cohface":
-        
-        train_dataset = CohfaceDataset(
-            args.dataset_dir,
-            True,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-        val_dataset = CohfaceDataset(
-            args.dataset_dir,
-            False,
-            augmentation,
-            args.vid_frame,
-            args.vid_frame_stride,
-        )
-
-    else:
-        print("Unsupported datasets!")
-        return
-
+    
+    train_dataset = rPPGDataset(args.trainval_dataset_name, args.dataset_dir, 1, augmentation, args.vid_frame, args.vid_frame_stride)
+    val_dataset = rPPGDataset(args.trainval_dataset_name, args.dataset_dir, 0, augmentation, args.vid_frame, args.vid_frame_stride)
+    
     train_sampler = None
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         sampler=train_sampler,
-        num_workers=args.workers,
+        num_workers=args.workers,   
         pin_memory=True,
         drop_last=False,
     )
@@ -370,6 +240,18 @@ def main_worker(args):
         pin_memory=True,
         drop_last=False,
     )
+    if args.test_dataset_name != "none":
+        test_dataset = rPPGDataset(args.test_dataset_name, args.dataset_dir, -1, augmentation, args.vid_frame, args.vid_frame_stride)
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.workers,
+            pin_memory=True,
+            drop_last=False,
+        )
+    
+    #TODO: test 처리 함수 만들기 (MTTS-CAN 처럼 평균값으로 하기)      
 
     if args.evaluate:        
         mae, std, rmse, r = validate(val_loader, model, criterion, device)
@@ -387,8 +269,9 @@ def main_worker(args):
     else:
         # Train model
         for epoch in trange(args.epochs, desc="Epoch"):
-            train_loss = train(train_loader, model, criterion, optimiser, device, args.finetune == "head")
-            scheduler.step()
+            baselen = GPU_NUM * args.vid_frame // args.vid_frame_stride
+            train_loss = train(train_loader, model, criterion, optimiser, baselen, device)
+            # scheduler.step()
             # Evaluate on validation set
             val_loss, std, rmse, r = validate(val_loader, model, criterion, device)        
 
@@ -424,47 +307,37 @@ def main_worker(args):
                 )
             )
 
-def train(train_loader, model, criterion, optimizer, device, finetune = True):
+def train(train_loader, model, criterion, optimizer, base_len, device):
     losses = AverageMeter("Loss", ":.4e")
-    stdlosses = AverageMeter("Loss_std", ":.4e")
-    criterion2 = nn.MSELoss()
-
-    if finetune:
-        model.eval() 
-    else:
-        model.train()
-    #head_model.train()
-
+    model.train()
+    batch = -1
     pbar = tqdm(train_loader, desc="Train Iteration")
-    tasum = 0; pasum = 0
-    cnt  = 0
-    for videos, targets in pbar:
-        # Process input
-        videos = videos.to(device, non_blocking=True)
-        targets = targets.reshape(-1, 1).to(device, non_blocking=True)
-        # Compute output
-        # for name, param in model.named_parameters():
-        #     if 'patch' in name:
-        #         print('debug 403 before update', name, param.data)
-        preds = model(videos)
+    for data, labels in pbar:
+        # Process input        
+        if batch == -1:
+            batch = data.size(0) 
+        if data.size(0) < batch:
+            continue
+        data = data.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+        if args.model_name == 'tscan':
+            labels = labels.reshape(-1, 1)
+            N, D, C, H, W = data.shape
+            data = data.view(N * D, C, H, W)
+            labels = labels.view(-1, 1)
+            data = data[:(N * D) // base_len * base_len]
+            labels = labels[:(N * D) // base_len * base_len]
+        preds = model(data)
         # Loss
-        loss = criterion(preds, targets)
-        # std between preds and targets
-        # lossstd = torch.sqrt(criterion2(torch.std(preds),torch.std(targets)))
+        loss = criterion(preds, labels)
         
         # loss = 0.7*loss + 0.3*lossstd  #ycyoon 값이 몰리지 않도록 조정
-        losses.update(loss.item(), videos.size(0))
-        # stdlosses.update(lossstd.item(), videos.size(0))
+        losses.update(loss.item(), data.size(0))
 
         # Compute gradient
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        # te = targets[-20:].tolist(); pe = preds[-20:].tolist()
-        # ta = [round(t[0], 2) for t in te]; pa = [round(p[0], 2) for p in pe]
-        # tasum += round(np.std(ta),2); pasum += round(np.std(pa),2)
-        # cnt += 1
-        # pbar.set_description("loss %f std loss:%f" % (losses.avg, stdlosses.avg))
         pbar.set_description("loss %f" % (losses.avg))
     return losses.avg
 
@@ -478,34 +351,38 @@ def validate(val_loader, model, criterion, device):
 
     # Switch to eval mode
     model.eval()
+    batch = -1
     pasum = 0; tasum = 0
-    #headmodel.eval()
-    for videos, targets in tqdm(val_loader, desc="Val Iteration"):
-        # for name, param in model.named_parameters():
-        #     if 'patch' in name:
-        #         print('debug 430 validate', name, param.data)
-        # Process input
-        videos = videos.to(device, non_blocking=True)
-        targets = targets.reshape(-1, 1).to(device, non_blocking=True)
+    for data, labels in tqdm(val_loader, desc="Val Iteration"):
+                # Process input
+        if batch == -1:
+            batch = data.size(0) 
+        if data.size(0) < batch:
+            continue
+        data = data.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+        if args.model_name == 'tscan':
+            labels = labels.reshape(-1, 1)
+            N, D, C, H, W = data.shape
+            data = data.view(N * D, C, H, W)
+            labels = labels.view(-1, 1)
 
-        # Compute output
-        preds = model(videos)
+        preds = model(data)
         # Loss
-        mae = criterion(preds, targets)
-        mse = mse_loss_func(preds, targets)
-        te = targets[-20:].tolist(); pe = preds[-20:].tolist()
-        ta = [round(t[0], 2) for t in te]; pa = [round(p[0], 2) for p in pe]
-        # std of ta
+        mae = criterion(preds, labels)
+        mse = mse_loss_func(preds, labels)
         
-        #print('example', [list(a) for a in zip(ta, pa)], round(np.std(ta),2), round(np.std(pa),2))
-        #logging.info('example', [list(a) for a in zip(ta, pa)], round(np.std(ta),2), round(np.std(pa),2))
+        te = labels[-20:].tolist(); pe = preds[-20:].tolist()
+        if args.model_name == 'tscan':
+            te = [t[0] for t in te]; pe = [p[0] for p in pe] 
+        ta = [round(t, 2) for t in te]; pa = [round(p, 2) for p in pe]
         tasum += np.std(ta); pasum += np.std(pa)
 
-        maes.update(mae.item(), targets.size(0))
-        mses.update(mse.item(), targets.size(0))
+        maes.update(mae.item(), labels.size(0))
+        mses.update(mse.item(), labels.size(0))
 
         all_pred.append(preds.detach().cpu())
-        all_true.append(targets.detach().cpu())
+        all_true.append(labels.detach().cpu())
     print('std of targets', tasum/len(val_loader), 'std of preds', pasum/len(val_loader))
 
     all_pred = torch.cat(all_pred).flatten()
@@ -513,7 +390,6 @@ def validate(val_loader, model, criterion, device):
 
     # Mean and Std
     diff = all_pred - all_true
-    mean = torch.mean(diff)
     std = torch.std(diff)
 
     # MSE
